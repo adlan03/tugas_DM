@@ -1,9 +1,6 @@
-streamlit
 scikit-learn
-joblib
-pandas
+imblearn
 numpy
-Sastrawi
-matplotlib
-seaborn
-wordcloud
+pandas
+streamlit
+joblib
