@@ -1,126 +1,146 @@
 import streamlit as st
-import os
 import joblib
-import pandas as pd
 import re
-from sklearn.metrics import accuracy_score
+import numpy as np
 
-st.set_page_config(page_title="Spam Detector", page_icon="📩", layout="centered")
-st.title("Spam Detector")
+st.set_page_config(page_title="SMS Spam Detector (Ensemble) — Improved", page_icon="📩", layout="centered")
+st.title("SMS Spam Detector — Dynamic Duo (NB + SVM)")
+st.markdown("**Deskripsi:** Aplikasi memprediksi apakah pesan SMS adalah *spam* atau *ham*. Model: MultinomialNB + Calibrated SVM ensembled (soft voting).")
 
-MODEL_BNB = 'model_bnb_spam.pkl'
-MODEL_SGD = 'model_sgd_spam.pkl'
-MODEL_ENSEMBLE = 'model_ensemble_spam.pkl'
-LE_PATH = 'label_encoder_spam.pkl'
-DATA_PATH = '/mnt/data/spam.csv'
+# ----- Load artifacts (pastikan file-file ini berada pada folder yang sama dengan app.py) -----
+tfidf = joblib.load("vectorizer_tfidf.pkl")
+nb = joblib.load("model_multinomial_nb.pkl")
+svm = joblib.load("model_calibrated_svm.pkl")
+ensemble = joblib.load("model_ensemble_voting.pkl")
 
-@st.cache_resource
-def load_artifacts():
-    artifacts = {}
-    if os.path.exists(MODEL_BNB):
-        artifacts['bnb'] = joblib.load(MODEL_BNB)
-    if os.path.exists(MODEL_SGD):
-        artifacts['sgd'] = joblib.load(MODEL_SGD)
-    if os.path.exists(MODEL_ENSEMBLE):
-        artifacts['ensemble'] = joblib.load(MODEL_ENSEMBLE)
-    if os.path.exists(LE_PATH):
-        artifacts['le'] = joblib.load(LE_PATH)
-        return artifacts
-
-art = load_artifacts()
-
-def clean_text(x):
-    if not isinstance(x, str):
-        return ""
-    x = re.sub(r'http\S+|www\S+|https\S+', '', x)
-    x = re.sub(r'[^A-Za-z0-9\s]', ' ', x)
-    x = x.lower().strip()
-    x = re.sub(r'\s+', ' ', x)
-    return x
-
-st.sidebar.header('Mode')
-mode = st.sidebar.radio('Pilih mode', ['Ensemble (Voting)', 'Head-to-Head'])
-if mode == 'Head-to-Head':
-    sel = st.sidebar.selectbox('Pilih model', ['BernoulliNB', 'SGDClassifier'])
-
-le = art.get('le')
-
-st.subheader('Masukkan teks untuk prediksi')
-text = st.text_area('', height=140)
-if st.button('Prediksi'):
-    if text.strip() == '':
-        st.warning('Masukkan teks terlebih dahulu')
-    else:
-        txt = clean_text(text)
-        pred = None
-        probs = None
-        if mode == 'Ensemble (Voting)':
-            m = art.get('ensemble')
-            if m is None:
-                st.error('Model ensemble tidak ditemukan. Pastikan file model_ensemble_spam.pkl tersedia.')
-            else:
-                pred = m.predict([txt])[0]
-                try:
-                    probs = m.predict_proba([txt])[0]
-                except Exception:
-                    probs = None
-        else:
-            if sel == 'BernoulliNB':
-                m = art.get('bnb')
-            else:
-                m = art.get('sgd')
-            if m is None:
-                st.error('Model yang dipilih tidak ditemukan. Jalankan training dan simpan model terlebih dahulu.')
-            else:
-                pred = m.predict([txt])[0]
-                try:
-                    probs = m.predict_proba([txt])[0]
-                except Exception:
-                    probs = None
-
-        if pred is not None:
-            if le is not None:
-                label = le.inverse_transform([pred])[0]
-            else:
-                label = str(pred)
-            st.markdown('### Hasil')
-            st.write('Label:', label)
-            if probs is not None and le is not None:
-                classes = le.classes_
-                pairs = sorted(list(zip(classes, probs)), key=lambda x: x[1], reverse=True)
-                st.write('Probabilitas:')
-                for c, p in pairs:
-                    st.write(f'- {c}: {p:.3f}')
-
-st.write('---')
-st.subheader('Evaluasi singkat (jika dataset asli ada)')
-if os.path.exists(DATA_PATH):
+# ----- Sidebar: performance (opsional: edit angka jika mau) -----
+with st.sidebar:
+    st.header("Model Performance (test split)")
+    # Jika Anda punya metadata.json, Anda bisa memuatnya dan menampilkan nilai nyata
     try:
-        df = pd.read_csv(DATA_PATH, encoding='latin-1')
-        df = df.dropna(axis=1)
-        df = df.rename(columns={df.columns[0]: 'label', df.columns[1]: 'text'})
-        df = df.drop_duplicates().reset_index(drop=True)
-        df['clean'] = df['text'].apply(clean_text)
-        if le is not None:
-            df['label_enc'] = le.transform(df['label'])
-        else:
-            df['label_enc'] = pd.factorize(df['label'])[0]
-        from sklearn.model_selection import train_test_split
-        X_train, X_test, y_train, y_test = train_test_split(df['clean'].values, df['label_enc'].values, test_size=0.2, random_state=42, stratify=df['label_enc'].values)
-        st.write('Dataset ditemukan di', DATA_PATH)
-        if 'bnb' in art:
-            preds = art['bnb'].predict(X_test)
-            st.write('Akurasi BernoulliNB:', accuracy_score(y_test, preds))
-        if 'sgd' in art:
-            preds = art['sgd'].predict(X_test)
-            st.write('Akurasi SGD:', accuracy_score(y_test, preds))
-        if 'ensemble' in art:
-            preds = art['ensemble'].predict(X_test)
-            st.write('Akurasi Ensemble:', accuracy_score(y_test, preds))
-    except Exception as e:
-        st.write('Gagal load dataset untuk evaluasi:', e)
-else:
-    st.write(f'Dataset tidak ditemukan di {DATA_PATH}. Untuk menampilkan akurasi otomatis, unggah dataset ke path tersebut atau edit DATA_PATH.')
+        meta = joblib.load("metadata.json") if False else None
+    except Exception:
+        meta = None
+    st.write("Akurasi MultinomialNB: (lihat training logs)")
+    st.write("Akurasi Calibrated SVM: (lihat training logs)")
+    st.write("Akurasi Ensemble (soft): (lihat training logs)")
+    st.caption("Catatan: angka akurasi asli disimpan di metadata.json saat training.")
 
-st.write('---')
-st.write('Jalankan: streamlit run streamlit_main.py')
+st.markdown('---')
+st.subheader("Masukkan SMS / Pesan untuk dianalisis")
+preset = st.selectbox("Pilih contoh cepat:", ["-- Ketik manual --", "Free entry: win money", "Reminder: meeting at 10", "Congrats you won", "Call me later"])
+text = st.text_area("Masukkan teks:", value="" if preset=="-- Ketik manual --" else preset, height=120)
+compare_models = st.checkbox("Bandingkan model (tampilkan prediksi tiap model)", value=True)
+detail_preproc = st.checkbox("Tampilkan detail preprocessing (clean text & token check)", value=False)
+show_top_features = st.checkbox("Tampilkan top fitur SVM (attempt)", value=False)
+
+MIN_LEN = 3
+
+# ----- Helpers -----
+def preprocess(text):
+    s = str(text).lower()
+    s = re.sub(r'http\S+', ' ', s)
+    s = re.sub(r'[^a-z0-9\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+def predict_with_model(vec, model):
+    # returns (pred_label, confidence (0..1 or None), prob_dict)
+    try:
+        probs = model.predict_proba(vec)[0]
+        classes = model.classes_
+        best_idx = int(np.argmax(probs))
+        return classes[best_idx], float(probs[best_idx]), dict(zip(classes, probs))
+    except Exception:
+        # fallback: only predict
+        pred = model.predict(vec)[0]
+        # try to approximate confidence using decision_function (sigmoid)
+        try:
+            df = model.decision_function(vec)
+            # scalar or array
+            if hasattr(df, 'shape'):
+                val = float(df[0]) if df.ndim == 1 else float(df[0][0])
+                prob = 1.0/(1.0 + np.exp(-val))
+                return pred, prob, {pred: prob}
+        except Exception:
+            return pred, None, {pred: None}
+
+def top_features_for_svm(vectorizer, calibrated_svm, class_label, top_n=10):
+    try:
+        # calibrated_svm wraps a base estimator (LinearSVC)
+        base = calibrated_svm.base_estimator_
+        coef = base.coef_  # shape: (n_classes, n_features) for multiclass
+        classes = calibrated_svm.classes_
+        idx = list(classes).index(class_label)
+        feat_names = vectorizer.get_feature_names_out()
+        topn = np.argsort(coef[idx])[-top_n:][::-1]
+        return [(feat_names[i], float(coef[idx][i])) for i in topn]
+    except Exception:
+        return None
+
+# ----- Main interaction -----
+if st.button("Analisis"):
+    user_text = text.strip()
+    if len(user_text) < MIN_LEN:
+        st.warning(f"Teks terlalu pendek — harap masukkan sedikitnya {MIN_LEN} karakter atau tambahkan konteks.")
+    else:
+        cleaned = preprocess(user_text)
+        vec = tfidf.transform([cleaned])
+
+        tokens = cleaned.split()
+        known = sum(1 for t in tokens if t in tfidf.vocabulary_)
+
+        if detail_preproc:
+            st.write("Hasil preprocessing:", cleaned)
+            st.write("Token asli:", tokens)
+            st.write("Token yang dikenali oleh model:", known, "dari", len(tokens))
+
+        if known == 0:
+            st.warning("Tidak ada token yang dikenali oleh model — hasil mungkin tidak akurat. Coba kata yang lebih umum atau konteks lebih panjang.")
+
+        # perform predictions
+        if compare_models:
+            p_nb, c_nb, probs_nb = predict_with_model(vec, nb)
+            p_svm, c_svm, probs_svm = predict_with_model(vec, svm)
+            p_ens, c_ens, probs_ens = predict_with_model(vec, ensemble)
+
+            st.markdown("### Hasil Perbandingan Model")
+            if c_nb is not None:
+                st.write(f"• MultinomialNB → {p_nb.upper()} (confidence: {c_nb*100:.2f}%)")
+            else:
+                st.write(f"• MultinomialNB → {p_nb.upper()}")
+
+            if c_svm is not None:
+                st.write(f"• CalibratedSVM → {p_svm.upper()} (confidence: {c_svm*100:.2f}%)")
+            else:
+                st.write(f"• CalibratedSVM → {p_svm.upper()}")
+
+            if c_ens is not None:
+                st.write(f"• Ensemble → {p_ens.upper()} (confidence: {c_ens*100:.2f}%)")
+            else:
+                st.write(f"• Ensemble → {p_ens.upper()}")
+
+        else:
+            p_ens, c_ens, probs_ens = predict_with_model(vec, ensemble)
+            st.markdown("### Prediksi (Ensemble)")
+            if c_ens is not None:
+                st.success(f"Label: {p_ens.upper()} — confidence: {c_ens*100:.2f}%")
+            else:
+                st.success(f"Label: {p_ens.upper()}")
+
+        # show probs if available
+        if 'probs_ens' in locals() and probs_ens:
+            st.write("Probabilitas (Ensemble):", probs_ens)
+
+        # show top features for spam if requested
+        if show_top_features:
+            st.markdown('---')
+            st.write("Top fitur yang menyumbang untuk kelas 'spam' (SVM) — jika ada:")
+            top_spam = top_features_for_svm(tfidf, svm, 'spam', top_n=12)
+            if top_spam:
+                st.table(top_spam)
+            else:
+                st.write("Tidak dapat menampilkan fitur — struktur model mungkin berbeda atau model bukan linear L2.")
+
+st.markdown('---')
+st.caption("Catatan: Model dilatih pada dataset SMS Spam. Untuk teks pendek atau kata yang jarang muncul, hasil mungkin kurang akurat.")
